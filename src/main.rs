@@ -123,76 +123,76 @@ fn main() {
 
     let total = files.len();
 
-    let mut words = files
-        .into_par_iter()
-        .fold_with(
-            (String::new(), HashMap::new()),
-            |(mut file_contents, mut words), file_path| {
-                let mut file = match std::fs::File::open(&file_path) {
-                    Ok(file) => file,
-                    Err(_) => {
-                        let count = COUNT.fetch_add(1, Relaxed);
-                        eprintln!("CANNOT OPEN ({:4}/{:4}) {:?}", count, total, file_path);
-                        return (file_contents, words);
-                    }
-                };
-
-                file_contents.clear();
-                let size = file.read_to_string(&mut file_contents).unwrap();
-                let file = &file_contents[..size];
-
-                match serde_json::from_str(&file) {
-                    Ok(json) => {
-                        let _: Json = json;
-                        for user in json.users {
-                            for post in user.posts {
-                                find_desc(post, &mut words);
-                            }
+    let mut words = save_pool.scope(move |save_pool| {
+        files
+            .into_par_iter()
+            .fold_with(
+                (String::new(), HashMap::new()),
+                |(mut file_contents, mut words), file_path| {
+                    let mut file = match std::fs::File::open(&file_path) {
+                        Ok(file) => file,
+                        Err(_) => {
+                            let count = COUNT.fetch_add(1, Relaxed);
+                            eprintln!("CANNOT OPEN ({:4}/{:4}) {:?}", count, total, file_path);
+                            return (file_contents, words);
                         }
+                    };
 
-                        let count = COUNT.fetch_add(1, Relaxed);
+                    file_contents.clear();
+                    let size = file.read_to_string(&mut file_contents).unwrap();
+                    let file = &file_contents[..size];
 
-                        eprintln!(
-                            "FINISHED ({:4}/{:4}) {:.2} {:?}",
-                            count,
-                            total,
-                            start.elapsed().as_secs_f32(),
-                            file_path
-                        );
+                    match serde_json::from_str(&file) {
+                        Ok(json) => {
+                            let _: Json = json;
+                            for user in json.users {
+                                for post in user.posts {
+                                    find_desc(post, &mut words);
+                                }
+                            }
+
+                            let count = COUNT.fetch_add(1, Relaxed);
+
+                            eprintln!(
+                                "FINISHED ({:4}/{:4}) {:.2} {:?}",
+                                count,
+                                total,
+                                start.elapsed().as_secs_f32(),
+                                file_path
+                            );
+                        }
+                        Err(_) => {
+                            let count = COUNT.fetch_add(1, Relaxed);
+                            eprintln!(
+                                "NO POSTS ({:4}/{:4}) {:.2} {:?}",
+                                count,
+                                total,
+                                start.elapsed().as_secs_f32(),
+                                file_path
+                            );
+                        }
                     }
-                    Err(_) => {
-                        let count = COUNT.fetch_add(1, Relaxed);
-                        eprintln!(
-                            "NO POSTS ({:4}/{:4}) {:.2} {:?}",
-                            count,
-                            total,
-                            start.elapsed().as_secs_f32(),
-                            file_path
-                        );
-                    }
-                }
 
-                (file_contents, words)
-            },
-        )
-        .map(|(s, words)| {
-            let now = std::time::Instant::now();
-            save_pool.spawn(move || drop(s));
-            eprintln!(
-                "drop: {} ({})",
-                start.elapsed().as_secs_f32(),
-                now.elapsed().as_secs_f32() * 1000.0
-            );
-            words
-        })
-        .reduce(HashMap::new, |mut a, mut b| {
-            let now = std::time::Instant::now();
-            for a in &mut [&mut a, &mut b] {
-                if a.len() > 100_000 {
-                    let a = std::mem::take(&mut **a);
-                    let temp_dir = &temp_dir;
-                    save_pool.scope(move |s| {
-                        s.spawn(move |_| {
+                    (file_contents, words)
+                },
+            )
+            .map(|(s, words)| {
+                let now = std::time::Instant::now();
+                save_pool.spawn(move |_| drop(s));
+                eprintln!(
+                    "drop: {} ({})",
+                    start.elapsed().as_secs_f32(),
+                    now.elapsed().as_secs_f32() * 1000.0
+                );
+                words
+            })
+            .reduce(HashMap::new, |mut a, mut b| {
+                let now = std::time::Instant::now();
+                for a in &mut [&mut a, &mut b] {
+                    if a.len() > 100_000 {
+                        let a = std::mem::take(&mut **a);
+                        let temp_dir = &temp_dir;
+                        save_pool.spawn(move |_| {
                             let file_id = TEMP_FILE_COUNT.fetch_add(1, Relaxed);
                             let file = std::fs::OpenOptions::new()
                                 .write(true)
@@ -216,29 +216,29 @@ fn main() {
                                 start.elapsed().as_secs_f32(),
                                 now.elapsed().as_secs_f32() * 1000.0
                             );
-                        })
-                    });
+                        });
+                    }
                 }
-            }
 
-            if b.capacity() > a.capacity() {
-                std::mem::swap(&mut a, &mut b);
-            }
+                if b.capacity() > a.capacity() {
+                    std::mem::swap(&mut a, &mut b);
+                }
 
-            a.reserve(b.len());
+                a.reserve(b.len());
 
-            for (b, v) in b {
-                *a.entry(b).or_default() += v;
-            }
+                for (b, v) in b {
+                    *a.entry(b).or_default() += v;
+                }
 
-            eprintln!(
-                "reduce: {} ({})",
-                start.elapsed().as_secs_f32(),
-                now.elapsed().as_secs_f32() * 1000.0
-            );
+                eprintln!(
+                    "reduce: {} ({})",
+                    start.elapsed().as_secs_f32(),
+                    now.elapsed().as_secs_f32() * 1000.0
+                );
 
-            a
-        });
+                a
+            })
+    });
 
     eprintln!("time: {}", start.elapsed().as_secs_f32());
 
@@ -252,6 +252,8 @@ fn main() {
 
     use std::cmp::Reverse;
     use std::io::Write;
+
+    drop(save_pool);
 
     for file in walkdir::WalkDir::new(temp_dir.path()) {
         use std::io::BufRead;
