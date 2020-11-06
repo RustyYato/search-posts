@@ -177,7 +177,7 @@ fn main() {
         .map(|(s, words)| {
             let now = std::time::Instant::now();
             drop(s);
-            println!(
+            eprintln!(
                 "drop: {} ({})",
                 start.elapsed().as_secs_f32(),
                 now.elapsed().as_secs_f32() * 1000.0
@@ -191,7 +191,7 @@ fn main() {
             }
 
             for a in &mut [&mut a, &mut b] {
-                if a.len() > 10_000 {
+                if a.len() > 100_000 {
                     let file_id = TEMP_FILE_COUNT.fetch_add(1, Relaxed);
                     let file = std::fs::OpenOptions::new()
                         .write(true)
@@ -201,15 +201,17 @@ fn main() {
                         .unwrap();
                     let now = std::time::Instant::now();
 
+                    let a_len = a.len();
+
                     #[allow(unused_must_use)]
                     for (word, count) in a.drain() {
                         write!(&file, "{}", count);
                         config::print_result(&file, word);
                     }
 
-                    println!(
+                    eprintln!(
                         "save ({}): {} ({})",
-                        a.len(),
+                        a_len,
                         start.elapsed().as_secs_f32(),
                         now.elapsed().as_secs_f32() * 1000.0
                     );
@@ -221,7 +223,7 @@ fn main() {
             for (b, v) in b {
                 *a.entry(b).or_default() += v;
             }
-            println!(
+            eprintln!(
                 "reduce: {} ({})",
                 start.elapsed().as_secs_f32(),
                 now.elapsed().as_secs_f32() * 1000.0
