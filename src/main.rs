@@ -1,12 +1,16 @@
-use bincode::{deserialize_from, serialize_into};
+use bincode::config::Options;
+use bincode::serialize_into;
 use hashbrown::HashMap;
+use itertools::Itertools;
 use rayon::prelude::*;
 use serde::Deserialize;
+use std::cmp::Reverse;
 use std::collections::BTreeMap;
-use std::io::{BufRead, BufReader, BufWriter, Read, Write};
+use std::io::{BufWriter, Read, Write};
 use unicode_segmentation::UnicodeSegmentation;
 use walkdir::WalkDir;
 
+use std::hash::{BuildHasher, Hash, Hasher};
 use std::sync::atomic::{AtomicU32, Ordering::Relaxed};
 
 mod value;
@@ -56,9 +60,6 @@ fn find_desc(input: value::Value<'_>, search: &mut HashMap<[Box<str>; config::WO
                 //     let count = item.split(word).count().saturating_sub(1);
                 //     *search.entry(word).or_default() += count as u64;
                 // }
-
-                use itertools::Itertools;
-                use std::hash::{BuildHasher, Hash, Hasher};
 
                 for sentence in item.unicode_sentences() {
                     for chunk in sentence.unicode_words().tuple_windows() {
@@ -214,7 +215,7 @@ fn main() {
                                 .create_new(true)
                                 .open(temp_dir.path().join(format!("temp-{}", file_id)))
                                 .unwrap();
-                            let mut file = BufWriter::new(file);
+                            let file = BufWriter::new(file);
                             let now = std::time::Instant::now();
 
                             let a_len = a.len();
@@ -253,9 +254,10 @@ fn main() {
 
     eprintln!("time: {}", start.elapsed().as_secs_f32());
 
-    use std::cmp::Reverse;
-
     drop(save_pool);
+
+    let mut file_contents = String::new();
+    let deser = bincode::config::DefaultOptions::default().with_no_limit();
 
     for file in walkdir::WalkDir::new(temp_dir.path()) {
         let file = file.unwrap();
@@ -274,11 +276,22 @@ fn main() {
             .open(file)
             .unwrap();
 
-        let file = BufReader::new(file);
-        let map: HashMap<[Box<str>; config::WORD_COUNT], u32> = deserialize_from(file).unwrap();
+        (&file).read_to_string(&mut file_contents).unwrap();
+        let map: HashMap<[&str; config::WORD_COUNT], u32> =
+            deser.deserialize(file_contents.as_bytes()).unwrap();
 
         for (word, count) in map {
-            *words.entry(word).or_default() += count;
+            let mut hasher = words.hasher().build_hasher();
+            word.hash(&mut hasher);
+            let hash = hasher.finish();
+
+            *words
+                .raw_entry_mut()
+                .from_hash(hash, |w| {
+                    w.iter().map(AsRef::<str>::as_ref).eq(word.iter().copied())
+                })
+                .or_insert_with(|| (config::to_owned(word), 0))
+                .1 += count;
         }
     }
 
