@@ -148,19 +148,25 @@ fn main() {
 
                         let count = COUNT.fetch_add(1, Relaxed);
 
-                        eprintln!("FINISHED ({:4}/{:4}) {:?}", count, total, file_path);
+                        eprintln!("FINISHED ({:4}/{:4}) {:.2} {:?}", count, total, start.elapsed().as_secs_f32(), file_path);
                     }
                     Err(_) => {
                         let count = COUNT.fetch_add(1, Relaxed);
-                        eprintln!("NO POSTS ({:4}/{:4}) {:?}", count, total, file_path);
+                        eprintln!("NO POSTS ({:4}/{:4}) {:.2} {:?}", count, total, start.elapsed().as_secs_f32(), file_path);
                     }
                 }
 
                 (file_contents, words)
             },
         )
-        .map(|(_, a)| a)
+        .map(|(s, words)| {
+            let now = std::time::Instant::now();
+            drop(s);
+            println!("drop: {} ({})", start.elapsed().as_secs_f32(), now.elapsed().as_secs_f32() * 1000.0);
+            words
+        })
         .reduce(HashMap::new, |mut a, mut b| {
+            let now = std::time::Instant::now();
             if b.capacity() > a.capacity() {
                 std::mem::swap(&mut a, &mut b);
             }
@@ -170,10 +176,13 @@ fn main() {
             for (b, v) in b {
                 *a.entry(b).or_default() += v;
             }
+            println!("reduce: {} ({})", start.elapsed().as_secs_f32(), now.elapsed().as_secs_f32() * 1000.0);
 
             a
         });
 
+    eprintln!("time: {}", start.elapsed().as_secs_f32());
+    
     let file = std::fs::OpenOptions::new()
         .create(true)
         .write(true)
@@ -191,13 +200,19 @@ fn main() {
         table.entry(Reverse(value)).or_default().push(key);
     }
 
+    let table_len = table.len();
+
     #[allow(unused_must_use)]
-    for (Reverse(key), words) in table {
-        write!(&file, "{}", key);
-        for chunk in words {
-            config::print_result(&file, chunk);
+    for (i, (Reverse(key), words)) in table.into_iter().enumerate() {
+        write!(&file, "{}\t{}", key, words.len());
+        eprintln!("prepare: {}/{} - {} ", i, table_len, words.len());
+        if words.len() < 1_000_000 {
+            for chunk in words {
+                config::print_result(&file, chunk);
+            }
         }
         writeln!(&file);
+        eprintln!("writen: {}/{}", i, table_len);
     }
 
     eprintln!("time: {}", start.elapsed().as_secs_f32());
