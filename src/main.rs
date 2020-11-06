@@ -177,7 +177,7 @@ fn main() {
         )
         .map(|(s, words)| {
             let now = std::time::Instant::now();
-            drop(s);
+            save_pool.spawn(move || drop(s));
             eprintln!(
                 "drop: {} ({})",
                 start.elapsed().as_secs_f32(),
@@ -191,30 +191,32 @@ fn main() {
                 if a.len() > 100_000 {
                     let a = std::mem::take(&mut **a);
                     let temp_dir = &temp_dir;
-                    save_pool.install(move || {
-                        let file_id = TEMP_FILE_COUNT.fetch_add(1, Relaxed);
-                        let file = std::fs::OpenOptions::new()
-                            .write(true)
-                            .read(false)
-                            .create_new(true)
-                            .open(temp_dir.path().join(format!("temp-{}", file_id)))
-                            .unwrap();
-                        let now = std::time::Instant::now();
+                    save_pool.scope(move |s| {
+                        s.spawn(move |_| {
+                            let file_id = TEMP_FILE_COUNT.fetch_add(1, Relaxed);
+                            let file = std::fs::OpenOptions::new()
+                                .write(true)
+                                .read(false)
+                                .create_new(true)
+                                .open(temp_dir.path().join(format!("temp-{}", file_id)))
+                                .unwrap();
+                            let now = std::time::Instant::now();
 
-                        let a_len = a.len();
+                            let a_len = a.len();
 
-                        #[allow(unused_must_use)]
-                        for (word, count) in a {
-                            write!(&file, "{}", count);
-                            config::print_result(&file, word);
-                        }
+                            #[allow(unused_must_use)]
+                            for (word, count) in a {
+                                write!(&file, "{}", count);
+                                config::print_result(&file, word);
+                            }
 
-                        eprintln!(
-                            "save ({}): {} ({})",
-                            a_len,
-                            start.elapsed().as_secs_f32(),
-                            now.elapsed().as_secs_f32() * 1000.0
-                        );
+                            eprintln!(
+                                "save ({}): {} ({})",
+                                a_len,
+                                start.elapsed().as_secs_f32(),
+                                now.elapsed().as_secs_f32() * 1000.0
+                            );
+                        })
                     });
                 }
             }
@@ -228,6 +230,7 @@ fn main() {
             for (b, v) in b {
                 *a.entry(b).or_default() += v;
             }
+
             eprintln!(
                 "reduce: {} ({})",
                 start.elapsed().as_secs_f32(),
