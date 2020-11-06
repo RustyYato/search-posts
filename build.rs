@@ -27,7 +27,7 @@ fn main() {
         fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
             write!(f, "[")?;
             for entry in 0..self.0 {
-                write!(f, "chunks[{0}].to_string(),", entry)?
+                write!(f, "chunks[{0}].into(),", entry)?
             }
             write!(f, "]")
         }
@@ -89,19 +89,20 @@ pub const WORD_COUNT: usize = {wc};
 pub fn get_chunks<'a>(tuple: {tuple_ty}) -> [&'a str; WORD_COUNT] {{
     {array_val}
 }}
-pub fn to_owned(chunks: [&str; WORD_COUNT]) -> [String; WORD_COUNT] {{
+pub fn to_owned(chunks: [&str; WORD_COUNT]) -> [Box<str>; WORD_COUNT] {{
     {to_owned}
 }}
 #[allow(unused_must_use)]
-pub fn print_result(mut file: impl std::io::Write, chunk: [String; WORD_COUNT]) {{
+pub fn print_result(mut file: impl std::io::Write, chunk: [Box<str>; WORD_COUNT]) {{
     write!(file, "\t{print_fmt}"{print_arg});
 }}
 #[allow(unused_must_use)]
-pub fn to_string(mut chunk: [String; WORD_COUNT]) -> String {{
+pub fn to_string(mut chunk: [Box<str>; WORD_COUNT]) -> String {{
     use std::borrow::Cow;
     use itertools::Itertools;
     chunk.iter_mut()
         .map(std::mem::take)
+        .map(String::from)
         .map(Cow::Owned)
         .intersperse(Cow::Borrowed(" "))
         .collect()

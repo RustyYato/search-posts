@@ -26,7 +26,7 @@ struct User<'a> {
     posts: Vec<value::Value<'a>>,
 }
 
-fn find_desc(input: value::Value<'_>, search: &mut HashMap<[String; config::WORD_COUNT], u32>) {
+fn find_desc(input: value::Value<'_>, search: &mut HashMap<[Box<str>; config::WORD_COUNT], u32>) {
     use value::Value::*;
 
     match input {
