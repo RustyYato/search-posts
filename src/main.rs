@@ -95,6 +95,7 @@ fn main() {
     let paths: Vec<String> = std::env::args().collect();
 
     let temp_dir = tempfile::tempdir().unwrap();
+    let save_pool = rayon::ThreadPoolBuilder::new().build().unwrap();
 
     let files: Vec<_> = paths
         .into_iter()
@@ -192,29 +193,33 @@ fn main() {
 
             for a in &mut [&mut a, &mut b] {
                 if a.len() > 100_000 {
-                    let file_id = TEMP_FILE_COUNT.fetch_add(1, Relaxed);
-                    let file = std::fs::OpenOptions::new()
-                        .write(true)
-                        .read(false)
-                        .create_new(true)
-                        .open(temp_dir.path().join(format!("temp-{}", file_id)))
-                        .unwrap();
-                    let now = std::time::Instant::now();
+                    let a = std::mem::take(&mut **a);
+                    let temp_dir = &temp_dir;
+                    save_pool.install(move || {
+                        let file_id = TEMP_FILE_COUNT.fetch_add(1, Relaxed);
+                        let file = std::fs::OpenOptions::new()
+                            .write(true)
+                            .read(false)
+                            .create_new(true)
+                            .open(temp_dir.path().join(format!("temp-{}", file_id)))
+                            .unwrap();
+                        let now = std::time::Instant::now();
 
-                    let a_len = a.len();
+                        let a_len = a.len();
 
-                    #[allow(unused_must_use)]
-                    for (word, count) in a.drain() {
-                        write!(&file, "{}", count);
-                        config::print_result(&file, word);
-                    }
+                        #[allow(unused_must_use)]
+                        for (word, count) in a {
+                            write!(&file, "{}", count);
+                            config::print_result(&file, word);
+                        }
 
-                    eprintln!(
-                        "save ({}): {} ({})",
-                        a_len,
-                        start.elapsed().as_secs_f32(),
-                        now.elapsed().as_secs_f32() * 1000.0
-                    );
+                        eprintln!(
+                            "save ({}): {} ({})",
+                            a_len,
+                            start.elapsed().as_secs_f32(),
+                            now.elapsed().as_secs_f32() * 1000.0
+                        );
+                    });
                 }
             }
 
