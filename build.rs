@@ -110,7 +110,7 @@ pub fn to_string(mut chunk: [Box<str>; WORD_COUNT]) -> String {{
 #[allow(unused_must_use)]
 pub fn parse(s: &str) -> [&str; WORD_COUNT] {{
     let mut output = [""; WORD_COUNT];
-    let mut iter = s.split("");
+    let mut iter = s.split(" ");
     for i in output.iter_mut() {{
         *i = iter.next().unwrap();
     }}
