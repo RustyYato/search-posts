@@ -10,6 +10,10 @@ use std::sync::atomic::{AtomicU32, Ordering::Relaxed};
 
 mod value;
 
+mod config {
+    include!(concat!(env!("OUT_DIR"), "/out.rs"));
+}
+
 #[derive(Deserialize)]
 struct Json<'a> {
     #[serde(borrow)]
@@ -22,7 +26,7 @@ struct User<'a> {
     posts: Vec<value::Value<'a>>,
 }
 
-fn find_desc(input: value::Value<'_>, search: &mut HashMap<[String; 2], u32>) {
+fn find_desc(input: value::Value<'_>, search: &mut HashMap<[String; config::WORD_COUNT], u32>) {
     use value::Value::*;
 
     match input {
@@ -56,11 +60,8 @@ fn find_desc(input: value::Value<'_>, search: &mut HashMap<[String; 2], u32>) {
                 use std::hash::{BuildHasher, Hash, Hasher};
 
                 for sentence in item.unicode_sentences() {
-                    for mut chunk in &sentence.unicode_words().chunks(2) {
-                        let chunk = match (chunk.next(), chunk.next()) {
-                            (Some(a), Some(b)) => [a, b],
-                            _ => continue,
-                        };
+                    for chunk in sentence.unicode_words().tuple_windows() {
+                        let chunk = config::get_chunks(chunk);
 
                         let mut hasher = search.hasher().build_hasher();
                         chunk.hash(&mut hasher);
@@ -68,8 +69,12 @@ fn find_desc(input: value::Value<'_>, search: &mut HashMap<[String; 2], u32>) {
 
                         *search
                             .raw_entry_mut()
-                            .from_hash(hash, |[a, b]| a == chunk[0] && b == chunk[1])
-                            .or_insert_with(|| ([chunk[0].to_string(), chunk[1].to_string()], 0))
+                            .from_hash(hash, |item| {
+                                item.iter()
+                                    .map(AsRef::<str>::as_ref)
+                                    .eq(chunk.iter().copied())
+                            })
+                            .or_insert_with(|| (config::to_owned(chunk), 0))
                             .1 += 1;
                     }
                 }
@@ -179,8 +184,8 @@ fn main() {
 
     for (Reverse(key), words) in table {
         print!("{}", key);
-        for [a, b] in words {
-            print!("\t{} {}", a, b);
+        for chunk in words {
+            config::print_result(chunk);
         }
         println!()
     }
