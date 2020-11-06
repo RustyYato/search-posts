@@ -101,6 +101,11 @@ fn main() {
         .build()
         .unwrap();
 
+    rayon::ThreadPoolBuilder::new()
+        .num_threads(num_cpus::get())
+        .build_global()
+        .unwrap();
+
     let files: Vec<_> = paths
         .into_iter()
         .flat_map(|path| {
