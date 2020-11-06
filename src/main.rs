@@ -9,9 +9,10 @@ use walkdir::WalkDir;
 use std::cmp::Reverse;
 use std::collections::BTreeMap;
 use std::hash::{BuildHasher, Hash, Hasher};
-use std::io::{BufWriter, Read, Write};
+use std::io::{BufReader, BufWriter, Read, Write};
 use std::sync::atomic::{AtomicU32, Ordering::Relaxed};
 
+mod des_collect;
 mod value;
 
 mod config {
@@ -208,18 +209,23 @@ fn main() {
                                 start.elapsed().as_secs_f32(),
                             );
                             let file_id = TEMP_FILE_COUNT.fetch_add(1, Relaxed);
+                            let file_path = temp_dir.path().join(format!("temp-{}", file_id));
                             let file = std::fs::OpenOptions::new()
                                 .write(true)
                                 .read(false)
                                 .create_new(true)
-                                .open(temp_dir.path().join(format!("temp-{}", file_id)))
+                                .open(&file_path)
                                 .unwrap();
-                            let file = BufWriter::new(file);
+
+                            let file = BufWriter::new(&file);
                             let now = std::time::Instant::now();
 
                             let a_len = a.len();
 
-                            bincode::serialize_into(file, &a).unwrap();
+                            bincode::config::DefaultOptions::default()
+                                .with_no_limit()
+                                .serialize_into(file, &a)
+                                .unwrap();
 
                             eprintln!(
                                 "save ({}): {} ({})",
@@ -255,7 +261,6 @@ fn main() {
 
     drop(save_pool);
 
-    let mut file_contents = Vec::new();
     let deser = bincode::config::DefaultOptions::default().with_no_limit();
 
     for file in walkdir::WalkDir::new(temp_dir.path()) {
@@ -274,25 +279,11 @@ fn main() {
             .read(true)
             .open(file)
             .unwrap();
+        let file = BufReader::new(file);
 
-        // TODO: use a custom DeserializeSeed to avoid this hashmap all together
-        (&file).read_to_end(&mut file_contents).unwrap();
-        let map: HashMap<[&str; config::WORD_COUNT], u32> =
-            deser.deserialize(&file_contents).unwrap();
-
-        for (word, count) in map {
-            let mut hasher = words.hasher().build_hasher();
-            word.hash(&mut hasher);
-            let hash = hasher.finish();
-
-            *words
-                .raw_entry_mut()
-                .from_hash(hash, |w| {
-                    w.iter().map(AsRef::<str>::as_ref).eq(word.iter().copied())
-                })
-                .or_insert_with(|| (config::to_owned(word), 0))
-                .1 += count;
-        }
+        deser
+            .deserialize_from_seed(des_collect::DesCollect(&mut words), file)
+            .unwrap();
     }
 
     let mut table = BTreeMap::<_, Vec<_>>::new();
