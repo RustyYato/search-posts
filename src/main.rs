@@ -187,10 +187,6 @@ fn main() {
         })
         .reduce(HashMap::new, |mut a, mut b| {
             let now = std::time::Instant::now();
-            if b.capacity() > a.capacity() {
-                std::mem::swap(&mut a, &mut b);
-            }
-
             for a in &mut [&mut a, &mut b] {
                 if a.len() > 100_000 {
                     let a = std::mem::take(&mut **a);
@@ -221,6 +217,10 @@ fn main() {
                         );
                     });
                 }
+            }
+
+            if b.capacity() > a.capacity() {
+                std::mem::swap(&mut a, &mut b);
             }
 
             a.reserve(b.len());
