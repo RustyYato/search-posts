@@ -19,6 +19,7 @@ hashbrown = '0.9'
 rayon = '1'
 walkdir = '2'
 itertools = '0.9'
+tempfile = '3'
 
 [dependencies.serde]
 version = '1'

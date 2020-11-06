@@ -87,11 +87,14 @@ fn find_desc(input: value::Value<'_>, search: &mut HashMap<[String; config::WORD
 }
 
 fn main() {
+    static COUNT: AtomicU32 = AtomicU32::new(1);
+    static TEMP_FILE_COUNT: AtomicU32 = AtomicU32::new(0);
+
     let start = std::time::Instant::now();
 
     let paths: Vec<String> = std::env::args().collect();
 
-    static COUNT: AtomicU32 = AtomicU32::new(1);
+    let temp_dir = tempfile::tempdir().unwrap();
 
     let files: Vec<_> = paths
         .into_iter()
@@ -148,11 +151,23 @@ fn main() {
 
                         let count = COUNT.fetch_add(1, Relaxed);
 
-                        eprintln!("FINISHED ({:4}/{:4}) {:.2} {:?}", count, total, start.elapsed().as_secs_f32(), file_path);
+                        eprintln!(
+                            "FINISHED ({:4}/{:4}) {:.2} {:?}",
+                            count,
+                            total,
+                            start.elapsed().as_secs_f32(),
+                            file_path
+                        );
                     }
                     Err(_) => {
                         let count = COUNT.fetch_add(1, Relaxed);
-                        eprintln!("NO POSTS ({:4}/{:4}) {:.2} {:?}", count, total, start.elapsed().as_secs_f32(), file_path);
+                        eprintln!(
+                            "NO POSTS ({:4}/{:4}) {:.2} {:?}",
+                            count,
+                            total,
+                            start.elapsed().as_secs_f32(),
+                            file_path
+                        );
                     }
                 }
 
@@ -162,7 +177,11 @@ fn main() {
         .map(|(s, words)| {
             let now = std::time::Instant::now();
             drop(s);
-            println!("drop: {} ({})", start.elapsed().as_secs_f32(), now.elapsed().as_secs_f32() * 1000.0);
+            println!(
+                "drop: {} ({})",
+                start.elapsed().as_secs_f32(),
+                now.elapsed().as_secs_f32() * 1000.0
+            );
             words
         })
         .reduce(HashMap::new, |mut a, mut b| {
@@ -171,18 +190,48 @@ fn main() {
                 std::mem::swap(&mut a, &mut b);
             }
 
+            for a in &mut [&mut a, &mut b] {
+                if a.len() > 10_000 {
+                    let file_id = TEMP_FILE_COUNT.fetch_add(1, Relaxed);
+                    let file = std::fs::OpenOptions::new()
+                        .write(true)
+                        .read(false)
+                        .create_new(true)
+                        .open(temp_dir.path().join(format!("temp-{}", file_id)))
+                        .unwrap();
+                    let now = std::time::Instant::now();
+
+                    #[allow(unused_must_use)]
+                    for (word, count) in a.drain() {
+                        write!(&file, "{}", count);
+                        config::print_result(&file, word);
+                    }
+
+                    println!(
+                        "save ({}): {} ({})",
+                        a.len(),
+                        start.elapsed().as_secs_f32(),
+                        now.elapsed().as_secs_f32() * 1000.0
+                    );
+                }
+            }
+
             a.reserve(b.len());
 
             for (b, v) in b {
                 *a.entry(b).or_default() += v;
             }
-            println!("reduce: {} ({})", start.elapsed().as_secs_f32(), now.elapsed().as_secs_f32() * 1000.0);
+            println!(
+                "reduce: {} ({})",
+                start.elapsed().as_secs_f32(),
+                now.elapsed().as_secs_f32() * 1000.0
+            );
 
             a
         });
 
     eprintln!("time: {}", start.elapsed().as_secs_f32());
-    
+
     let file = std::fs::OpenOptions::new()
         .create(true)
         .write(true)
@@ -196,8 +245,35 @@ fn main() {
 
     let mut table = BTreeMap::<_, Vec<_>>::new();
 
-    for (key, value) in words {
-        table.entry(Reverse(value)).or_default().push(key);
+    for (word, count) in words {
+        table
+            .entry(Reverse(count))
+            .or_default()
+            .push(config::to_string(word));
+    }
+
+    for file in walkdir::WalkDir::new(temp_dir.path()) {
+        use std::io::BufRead;
+
+        let file = std::fs::OpenOptions::new()
+            .write(false)
+            .read(true)
+            .open(file.unwrap().path())
+            .unwrap();
+
+        let file = std::io::BufReader::new(file);
+
+        for line in file.lines() {
+            let line = line.unwrap();
+            let mut line = line.split("\t");
+            let count = line.next().unwrap().parse().unwrap();
+            let word = line.next().unwrap();
+
+            table
+                .entry(Reverse(count))
+                .or_default()
+                .push(word.to_string());
+        }
     }
 
     let table_len = table.len();
@@ -208,7 +284,7 @@ fn main() {
         eprintln!("prepare: {}/{} - {} ", i, table_len, words.len());
         if words.len() < 1_000_000 {
             for chunk in words {
-                config::print_result(&file, chunk);
+                write!(&file, "\t{}", chunk);
             }
         }
         writeln!(&file);

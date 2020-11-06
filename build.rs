@@ -93,9 +93,18 @@ pub fn to_owned(chunks: [&str; WORD_COUNT]) -> [String; WORD_COUNT] {{
     {to_owned}
 }}
 #[allow(unused_must_use)]
-pub fn print_result(mut file: &std::fs::File, chunk: [String; WORD_COUNT]) {{
-    use std::io::Write;
+pub fn print_result(mut file: impl std::io::Write, chunk: [String; WORD_COUNT]) {{
     write!(file, "\t{print_fmt}"{print_arg});
+}}
+#[allow(unused_must_use)]
+pub fn to_string(mut chunk: [String; WORD_COUNT]) -> String {{
+    use std::borrow::Cow;
+    use itertools::Itertools;
+    chunk.iter_mut()
+        .map(std::mem::take)
+        .map(Cow::Owned)
+        .intersperse(Cow::Borrowed(" "))
+        .collect()
 }}
 "#,
         wc = word_count,
