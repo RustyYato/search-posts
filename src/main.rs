@@ -95,6 +95,7 @@ fn main() {
     let paths: Vec<String> = std::env::args().collect();
 
     let temp_dir = tempfile::tempdir().unwrap();
+    let temp_dir = &temp_dir;
     let save_pool = rayon::ThreadPoolBuilder::new().build().unwrap();
 
     let files: Vec<_> = paths
@@ -191,7 +192,6 @@ fn main() {
                 for a in &mut [&mut a, &mut b] {
                     if a.len() > 100_000 {
                         let a = std::mem::take(&mut **a);
-                        let temp_dir = &temp_dir;
                         save_pool.spawn(move |_| {
                             let file_id = TEMP_FILE_COUNT.fetch_add(1, Relaxed);
                             let file = std::fs::OpenOptions::new()
