@@ -1,5 +1,6 @@
 /target*
 out kk
 out ks
-output*.txt
+*.txt
 *.lock
+*.zip
