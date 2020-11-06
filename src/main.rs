@@ -257,6 +257,11 @@ fn main() {
         use std::io::BufRead;
 
         let file = file.unwrap();
+
+        if !file.file_type().is_file() {
+            continue;
+        }
+
         let file = file.path();
 
         eprintln!("read temp: {:?}", file);
