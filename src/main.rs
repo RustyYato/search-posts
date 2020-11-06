@@ -2,7 +2,7 @@ use hashbrown::HashMap;
 use rayon::prelude::*;
 use serde::Deserialize;
 use std::collections::BTreeMap;
-use std::io::Read;
+use std::io::{BufRead, BufReader, BufWriter, Read, Write};
 use unicode_segmentation::UnicodeSegmentation;
 use walkdir::WalkDir;
 
@@ -201,6 +201,11 @@ fn main() {
                     if a.len() > 100_000 {
                         let a = std::mem::take(&mut **a);
                         save_pool.spawn(move |_| {
+                            eprintln!(
+                                "start save ({}): {}",
+                                a.len(),
+                                start.elapsed().as_secs_f32(),
+                            );
                             let file_id = TEMP_FILE_COUNT.fetch_add(1, Relaxed);
                             let file = std::fs::OpenOptions::new()
                                 .write(true)
@@ -208,14 +213,15 @@ fn main() {
                                 .create_new(true)
                                 .open(temp_dir.path().join(format!("temp-{}", file_id)))
                                 .unwrap();
+                            let mut file = BufWriter::new(file);
                             let now = std::time::Instant::now();
 
                             let a_len = a.len();
 
                             #[allow(unused_must_use)]
                             for (word, count) in a {
-                                write!(&file, "{}", count);
-                                config::print_result(&file, word);
+                                write!(&mut file, "{}", count);
+                                config::print_result(&mut file, word);
                             }
 
                             eprintln!(
@@ -250,22 +256,11 @@ fn main() {
 
     eprintln!("time: {}", start.elapsed().as_secs_f32());
 
-    let file = std::fs::OpenOptions::new()
-        .create(true)
-        .write(true)
-        .truncate(true)
-        .read(false)
-        .open("out.txt")
-        .unwrap();
-
     use std::cmp::Reverse;
-    use std::io::Write;
 
     drop(save_pool);
 
     for file in walkdir::WalkDir::new(temp_dir.path()) {
-        use std::io::BufRead;
-
         let file = file.unwrap();
 
         if !file.file_type().is_file() {
@@ -282,7 +277,7 @@ fn main() {
             .open(file)
             .unwrap();
 
-        let file = std::io::BufReader::new(file);
+        let file = BufReader::new(file);
 
         for line in file.lines() {
             use std::hash::{BuildHasher, Hash, Hasher};
@@ -317,16 +312,26 @@ fn main() {
 
     let table_len = table.len();
 
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(true)
+        .read(false)
+        .open("out.txt")
+        .unwrap();
+    let mut file = BufWriter::new(file);
+    let file = &mut file;
+
     #[allow(unused_must_use)]
     for (i, (Reverse(key), words)) in table.into_iter().enumerate() {
-        write!(&file, "{}\t{}", key, words.len());
+        write!(file, "{}\t{}", key, words.len());
         eprintln!("prepare: {}/{} - {} ", i, table_len, words.len());
         if words.len() < 1_000_000 {
             for chunk in words {
-                config::print_result(&file, chunk);
+                config::print_result(&mut *file, chunk);
             }
         }
-        writeln!(&file);
+        writeln!(file);
         eprintln!("writen: {}/{}", i, table_len);
     }
 
