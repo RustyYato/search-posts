@@ -1,3 +1,4 @@
+use bincode::{deserialize_from, serialize_into};
 use hashbrown::HashMap;
 use rayon::prelude::*;
 use serde::Deserialize;
@@ -218,11 +219,7 @@ fn main() {
 
                             let a_len = a.len();
 
-                            #[allow(unused_must_use)]
-                            for (word, count) in a {
-                                write!(&mut file, "{}", count);
-                                config::print_result(&mut file, word);
-                            }
+                            serialize_into(file, &a).unwrap();
 
                             eprintln!(
                                 "save ({}): {} ({})",
@@ -278,29 +275,10 @@ fn main() {
             .unwrap();
 
         let file = BufReader::new(file);
+        let map: HashMap<[Box<str>; config::WORD_COUNT], u32> = deserialize_from(file).unwrap();
 
-        for line in file.lines() {
-            use std::hash::{BuildHasher, Hash, Hasher};
-
-            let line = line.unwrap();
-            let mut line = line.split("\t");
-            let count: u32 = line.next().unwrap().parse().unwrap();
-            let word = line.next().unwrap();
-            let chunk = config::parse(word);
-
-            let mut hasher = words.hasher().build_hasher();
-            chunk.hash(&mut hasher);
-            let hash = hasher.finish();
-
-            *words
-                .raw_entry_mut()
-                .from_hash(hash, |item| {
-                    item.iter()
-                        .map(AsRef::<str>::as_ref)
-                        .eq(chunk.iter().copied())
-                })
-                .or_insert_with(|| (config::to_owned(chunk), 0))
-                .1 += count;
+        for (word, count) in map {
+            *words.entry(word).or_default() += count;
         }
     }
 
