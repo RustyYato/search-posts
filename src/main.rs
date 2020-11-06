@@ -199,7 +199,7 @@ fn main() {
             .reduce(HashMap::new, |mut a, mut b| {
                 let now = std::time::Instant::now();
                 for a in &mut [&mut a, &mut b] {
-                    if a.len() > 100_000 {
+                    if a.len() > 1_000_000 {
                         let a = std::mem::take(&mut **a);
                         save_pool.spawn(move |_| {
                             eprintln!(
