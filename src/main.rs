@@ -255,10 +255,15 @@ fn main() {
     for file in walkdir::WalkDir::new(temp_dir.path()) {
         use std::io::BufRead;
 
+        let file = file.unwrap();
+        let file = file.path();
+
+        eprintln!("read temp: {:?}", file);
+
         let file = std::fs::OpenOptions::new()
             .write(false)
             .read(true)
-            .open(file.unwrap().path())
+            .open(file)
             .unwrap();
 
         let file = std::io::BufReader::new(file);
