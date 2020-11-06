@@ -106,6 +106,15 @@ pub fn to_string(mut chunk: [String; WORD_COUNT]) -> String {{
         .intersperse(Cow::Borrowed(" "))
         .collect()
 }}
+#[allow(unused_must_use)]
+pub fn parse(s: &str) -> [&str; WORD_COUNT] {{
+    let mut output = [""; WORD_COUNT];
+    let iter = s.split("");
+    for i in output.iter_mut() {{
+        *i = iter.next().unwrap();
+    }}
+    output
+}}
 "#,
         wc = word_count,
         to_owned = ToOwnedImpl(word_count),

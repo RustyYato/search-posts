@@ -122,7 +122,7 @@ fn main() {
 
     let total = files.len();
 
-    let words = files
+    let mut words = files
         .into_par_iter()
         .fold_with(
             (String::new(), HashMap::new()),
@@ -243,15 +243,6 @@ fn main() {
     use std::cmp::Reverse;
     use std::io::Write;
 
-    let mut table = BTreeMap::<_, Vec<_>>::new();
-
-    for (word, count) in words {
-        table
-            .entry(Reverse(count))
-            .or_default()
-            .push(config::to_string(word));
-    }
-
     for file in walkdir::WalkDir::new(temp_dir.path()) {
         use std::io::BufRead;
 
@@ -269,16 +260,34 @@ fn main() {
         let file = std::io::BufReader::new(file);
 
         for line in file.lines() {
+            use std::hash::{BuildHasher, Hash, Hasher};
+
             let line = line.unwrap();
             let mut line = line.split("\t");
-            let count = line.next().unwrap().parse().unwrap();
+            let count: u32 = line.next().unwrap().parse().unwrap();
             let word = line.next().unwrap();
+            let chunk = config::parse(word);
 
-            table
-                .entry(Reverse(count))
-                .or_default()
-                .push(word.to_string());
+            let mut hasher = words.hasher().build_hasher();
+            chunk.hash(&mut hasher);
+            let hash = hasher.finish();
+
+            *words
+                .raw_entry_mut()
+                .from_hash(hash, |item| {
+                    item.iter()
+                        .map(AsRef::<str>::as_ref)
+                        .eq(chunk.iter().copied())
+                })
+                .or_insert_with(|| (config::to_owned(chunk), 0))
+                .1 += count;
         }
+    }
+
+    let mut table = BTreeMap::<_, Vec<_>>::new();
+
+    for (word, count) in words {
+        table.entry(Reverse(count)).or_default().push(word);
     }
 
     let table_len = table.len();
@@ -289,7 +298,7 @@ fn main() {
         eprintln!("prepare: {}/{} - {} ", i, table_len, words.len());
         if words.len() < 1_000_000 {
             for chunk in words {
-                write!(&file, "\t{}", chunk);
+                config::print_result(&file, chunk);
             }
         }
         writeln!(&file);
