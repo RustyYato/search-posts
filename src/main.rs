@@ -96,7 +96,10 @@ fn main() {
 
     let temp_dir = tempfile::tempdir().unwrap();
     let temp_dir = &temp_dir;
-    let save_pool = rayon::ThreadPoolBuilder::new().build().unwrap();
+    let save_pool = rayon::ThreadPoolBuilder::new()
+        .num_threads(num_cpus::get())
+        .build()
+        .unwrap();
 
     let files: Vec<_> = paths
         .into_iter()
