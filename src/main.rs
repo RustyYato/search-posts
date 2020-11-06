@@ -174,7 +174,16 @@ fn main() {
             a
         });
 
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(true)
+        .read(false)
+        .open("out.txt")
+        .unwrap();
+
     use std::cmp::Reverse;
+    use std::io::Write;
 
     let mut table = BTreeMap::<_, Vec<_>>::new();
 
@@ -182,12 +191,13 @@ fn main() {
         table.entry(Reverse(value)).or_default().push(key);
     }
 
+    #[allow(unused_must_use)]
     for (Reverse(key), words) in table {
-        print!("{}", key);
+        write!(&file, "{}", key);
         for chunk in words {
-            config::print_result(chunk);
+            config::print_result(&file, chunk);
         }
-        println!()
+        writeln!(&file);
     }
 
     eprintln!("time: {}", start.elapsed().as_secs_f32());

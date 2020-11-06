@@ -92,8 +92,10 @@ pub fn get_chunks<'a>(tuple: {tuple_ty}) -> [&'a str; WORD_COUNT] {{
 pub fn to_owned(chunks: [&str; WORD_COUNT]) -> [String; WORD_COUNT] {{
     {to_owned}
 }}
-pub fn print_result(chunk: [String; WORD_COUNT]) {{
-    print!("\t{print_fmt}"{print_arg})
+#[allow(unused_must_use)]
+pub fn print_result(mut file: &std::fs::File, chunk: [String; WORD_COUNT]) {{
+    use std::io::Write;
+    write!(file, "\t{print_fmt}"{print_arg});
 }}
 "#,
         wc = word_count,
