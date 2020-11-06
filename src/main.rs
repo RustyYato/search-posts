@@ -262,6 +262,7 @@ fn main() {
     drop(save_pool);
 
     let deser = bincode::config::DefaultOptions::default().with_no_limit();
+    let mut file_contents = Vec::new();
 
     for file in walkdir::WalkDir::new(temp_dir.path()) {
         let file = file.unwrap();
@@ -279,10 +280,14 @@ fn main() {
             .read(true)
             .open(file)
             .unwrap();
-        let file = BufReader::new(file);
+        let len = file.metadata().unwrap().len();
+        
+        file_contents.clear();
+        file_contents.resize(len as usize, 0);
+        BufReader::new(file).read_exact(&mut file_contents).unwrap();
 
         deser
-            .deserialize_from_seed(des_collect::DesCollect(&mut words), file)
+            .deserialize_seed(des_collect::DesCollect(&mut words), &file_contents)
             .unwrap();
     }
 
