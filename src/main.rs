@@ -1,16 +1,15 @@
 use bincode::config::Options;
-use bincode::serialize_into;
 use hashbrown::HashMap;
 use itertools::Itertools;
 use rayon::prelude::*;
 use serde::Deserialize;
-use std::cmp::Reverse;
-use std::collections::BTreeMap;
-use std::io::{BufWriter, Read, Write};
 use unicode_segmentation::UnicodeSegmentation;
 use walkdir::WalkDir;
 
+use std::cmp::Reverse;
+use std::collections::BTreeMap;
 use std::hash::{BuildHasher, Hash, Hasher};
+use std::io::{BufWriter, Read, Write};
 use std::sync::atomic::{AtomicU32, Ordering::Relaxed};
 
 mod value;
@@ -220,7 +219,7 @@ fn main() {
 
                             let a_len = a.len();
 
-                            serialize_into(file, &a).unwrap();
+                            bincode::serialize_into(file, &a).unwrap();
 
                             eprintln!(
                                 "save ({}): {} ({})",
@@ -256,7 +255,7 @@ fn main() {
 
     drop(save_pool);
 
-    let mut file_contents = String::new();
+    let mut file_contents = Vec::new();
     let deser = bincode::config::DefaultOptions::default().with_no_limit();
 
     for file in walkdir::WalkDir::new(temp_dir.path()) {
@@ -276,9 +275,10 @@ fn main() {
             .open(file)
             .unwrap();
 
-        (&file).read_to_string(&mut file_contents).unwrap();
+        // TODO: use a custom DeserializeSeed to avoid this hashmap all together
+        (&file).read_to_end(&mut file_contents).unwrap();
         let map: HashMap<[&str; config::WORD_COUNT], u32> =
-            deser.deserialize(file_contents.as_bytes()).unwrap();
+            deser.deserialize(&file_contents).unwrap();
 
         for (word, count) in map {
             let mut hasher = words.hasher().build_hasher();
