@@ -13,8 +13,8 @@ use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering::Relaxed};
 use std::time::Instant;
 
 mod des_collect;
-mod proc_file;
 mod map;
+mod proc_file;
 
 mod config {
     include!(concat!(env!("OUT_DIR"), "/out.rs"));
