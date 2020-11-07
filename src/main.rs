@@ -21,6 +21,7 @@ mod config {
 
 static FILE_PROCESED_COUNT: AtomicU32 = AtomicU32::new(1);
 static TOTAL_FILE_COUNT: AtomicUsize = AtomicUsize::new(0);
+static TEMP_FILE_COUNT: AtomicU32 = AtomicU32::new(0);
 
 type Phrase<'a> = [&'a str; config::WORD_COUNT];
 type PhraseBuf = [Box<str>; config::WORD_COUNT];
@@ -98,8 +99,6 @@ fn process_file(
 }
 
 fn serialize_to_temp(temp_dir: &tempfile::TempDir, phrase_counts: Map) {
-    static TEMP_FILE_COUNT: AtomicU32 = AtomicU32::new(0);
-
     info!("start save: {}", phrase_counts.len());
 
     let file_id = TEMP_FILE_COUNT.fetch_add(1, Relaxed);
@@ -228,11 +227,14 @@ fn main() {
     let deser = bincode::config::DefaultOptions::default().with_no_limit();
     let mut file_contents = Vec::new();
 
+    let temp_file_count = TEMP_FILE_COUNT.load(Relaxed);
+
     let temp_files = walkdir::WalkDir::new(temp_dir.path())
         .into_iter()
-        .flatten()
-        .filter(|file| file.file_type().is_file())
-        .filter_map(|file| {
+        .enumerate()
+        .flat_map(|(i, x)| x.map(|x| (i, x)))
+        .filter(|(_, file)| file.file_type().is_file())
+        .filter_map(|(i, file)| {
             let file_path = file.path();
             match std::fs::OpenOptions::new()
                 .write(false)
@@ -240,11 +242,14 @@ fn main() {
                 .open(file_path)
             {
                 Ok(file) => {
-                    info!("read temp: {:?}", file_path);
+                    info!("read temp: ({}/{}) {:?}", i, temp_file_count, file_path);
                     Some(file)
                 }
                 Err(_) => {
-                    warn!("unable to read: {:?}", file_path);
+                    warn!(
+                        "unable to read: ({}/{}) {:?}",
+                        i, temp_file_count, file_path
+                    );
                     None
                 }
             }
