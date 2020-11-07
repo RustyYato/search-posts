@@ -10,7 +10,9 @@ use std::cmp::Reverse;
 use std::collections::BTreeMap;
 use std::hash::{BuildHasher, Hash, Hasher};
 use std::io::{BufReader, BufWriter, Read, Write};
-use std::sync::atomic::{AtomicU32, Ordering::Relaxed};
+use std::path::Path;
+use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering::Relaxed};
+use std::time::Instant;
 
 mod des_collect;
 mod value;
@@ -18,6 +20,13 @@ mod value;
 mod config {
     include!(concat!(env!("OUT_DIR"), "/out.rs"));
 }
+
+static FILE_PROCESED_COUNT: AtomicU32 = AtomicU32::new(1);
+static TOTAL_FILE_COUNT: AtomicUsize = AtomicUsize::new(0);
+
+type Phrase<'a> = [&'a str; config::WORD_COUNT];
+type PhraseBuf = [Box<str>; config::WORD_COUNT];
+type Map = HashMap<PhraseBuf, u32>;
 
 #[derive(Deserialize)]
 struct Json<'a> {
@@ -31,68 +40,151 @@ struct User<'a> {
     posts: Vec<value::Value<'a>>,
 }
 
-fn find_desc(input: value::Value<'_>, search: &mut HashMap<[Box<str>; config::WORD_COUNT], u32>) {
+fn insert_value(phrase: Phrase, count: u32, phrase_counts: &mut Map) {
+    let mut hasher = phrase_counts.hasher().build_hasher();
+    phrase.hash(&mut hasher);
+    let hash = hasher.finish();
+
+    *phrase_counts
+        .raw_entry_mut()
+        .from_hash(hash, |item| {
+            item.iter()
+                .map(AsRef::<str>::as_ref)
+                .eq(phrase.iter().copied())
+        })
+        .or_insert_with(|| (config::to_owned(phrase), 0))
+        .1 += count;
+}
+
+fn find_desc(input: value::Value<'_>, phrase_counts: &mut Map) {
     use value::Value::*;
 
     match input {
         Ignored | String(_) => (),
-        Array(array) => {
-            array.into_iter().for_each(|value| find_desc(value, search));
-        }
+        Array(array) => array
+            .into_iter()
+            .for_each(|value| find_desc(value, phrase_counts)),
         Object(map) => {
-            if let Some(item) = map.iter().find_map(|(key, value)| {
-                if key == "text" || key == "description" {
-                    value.as_str()
-                } else {
-                    None
-                }
-            }) {
-                // for &word in [
-                //     "beloye prevoskhodstvo",
-                //     "белое превосходство",
-                //     "Покорение материковой России",
-                //     "Pokoreniye materikovoy Rossii",
-                //     "завоевание материка",
-                //     "zavoyevaniye materika",
-                // ]
-                // .iter()
-                // {
-                //     let count = item.split(word).count().saturating_sub(1);
-                //     *search.entry(word).or_default() += count as u64;
-                // }
-
-                for sentence in item.unicode_sentences() {
-                    for chunk in sentence.unicode_words().tuple_windows() {
-                        let chunk = config::get_chunks(chunk);
-
-                        let mut hasher = search.hasher().build_hasher();
-                        chunk.hash(&mut hasher);
-                        let hash = hasher.finish();
-
-                        *search
-                            .raw_entry_mut()
-                            .from_hash(hash, |item| {
-                                item.iter()
-                                    .map(AsRef::<str>::as_ref)
-                                    .eq(chunk.iter().copied())
-                            })
-                            .or_insert_with(|| (config::to_owned(chunk), 0))
-                            .1 += 1;
+            let phrases = map
+                .iter()
+                .filter_map(|(key, value)| {
+                    if key == "text" || key == "description" {
+                        value.as_str()
+                    } else {
+                        None
                     }
-                }
+                })
+                .flat_map(UnicodeSegmentation::unicode_sentences)
+                .map(UnicodeSegmentation::unicode_words)
+                .flat_map(Itertools::tuple_windows);
+
+            for phrase in phrases {
+                let chunk = config::get_chunks(phrase);
+
+                insert_value(chunk, 1, phrase_counts);
             }
 
             map.into_iter()
-                .for_each(|(_, value)| find_desc(value, search));
+                .for_each(|(_, value)| find_desc(value, phrase_counts));
         }
     }
 }
 
-fn main() {
-    static COUNT: AtomicU32 = AtomicU32::new(1);
+fn process_file(
+    start: Instant,
+    file_contents: &mut String,
+    phrase_counts: &mut Map,
+    file_path: impl AsRef<Path>,
+) {
+    let file_path = file_path.as_ref();
+    let mut file = match std::fs::File::open(file_path) {
+        Ok(file) => file,
+        Err(_) => {
+            let count = FILE_PROCESED_COUNT.fetch_add(1, Relaxed);
+            eprintln!(
+                "CANNOT OPEN ({:4}/{:4}) {:?}",
+                count,
+                TOTAL_FILE_COUNT.load(Relaxed),
+                file_path
+            );
+            return;
+        }
+    };
+
+    file_contents.clear();
+    let size = file.read_to_string(file_contents).unwrap();
+    let file = &file_contents[..size];
+
+    match serde_json::from_str(&file) {
+        Ok(json) => {
+            let _: Json = json;
+            for user in json.users {
+                for post in user.posts {
+                    find_desc(post, phrase_counts);
+                }
+            }
+
+            let count = FILE_PROCESED_COUNT.fetch_add(1, Relaxed);
+
+            eprintln!(
+                "FINISHED ({:4}/{:4}) {:.2} {:?}",
+                count,
+                TOTAL_FILE_COUNT.load(Relaxed),
+                start.elapsed().as_secs_f32(),
+                file_path
+            );
+        }
+        Err(_) => {
+            let count = FILE_PROCESED_COUNT.fetch_add(1, Relaxed);
+            eprintln!(
+                "NO POSTS ({:4}/{:4}) {:.2} {:?}",
+                count,
+                TOTAL_FILE_COUNT.load(Relaxed),
+                start.elapsed().as_secs_f32(),
+                file_path
+            );
+        }
+    }
+}
+
+fn serialize_to_temp(start: Instant, temp_dir: &tempfile::TempDir, phrase_counts: Map) {
     static TEMP_FILE_COUNT: AtomicU32 = AtomicU32::new(0);
 
-    let start = std::time::Instant::now();
+    eprintln!(
+        "start save ({}): {}",
+        phrase_counts.len(),
+        start.elapsed().as_secs_f32(),
+    );
+
+    let file_id = TEMP_FILE_COUNT.fetch_add(1, Relaxed);
+    let file_path = temp_dir.path().join(format!("temp-{}", file_id));
+    let file = std::fs::OpenOptions::new()
+        .write(true)
+        .read(false)
+        .create_new(true)
+        .open(&file_path)
+        .unwrap();
+
+    let file = BufWriter::new(&file);
+    let now = Instant::now();
+
+    let a_len = phrase_counts.len();
+
+    bincode::config::DefaultOptions::default()
+        .with_no_limit()
+        .serialize_into(file, &phrase_counts)
+        .unwrap();
+
+    eprintln!(
+        "save ({}): {} ({})",
+        a_len,
+        start.elapsed().as_secs_f32(),
+        now.elapsed().as_secs_f32() * 1000.0
+    );
+}
+
+fn main() {
+    let start = Instant::now();
 
     let paths: Vec<String> = std::env::args().collect();
 
@@ -132,63 +224,20 @@ fn main() {
         .map(|dir_entry| dir_entry.path().to_owned())
         .collect();
 
-    let total = files.len();
+    TOTAL_FILE_COUNT.store(files.len(), Relaxed);
 
     let mut words = save_pool.scope(move |save_pool| {
         files
             .into_par_iter()
             .fold_with(
                 (String::new(), HashMap::new()),
-                |(mut file_contents, mut words), file_path| {
-                    let mut file = match std::fs::File::open(&file_path) {
-                        Ok(file) => file,
-                        Err(_) => {
-                            let count = COUNT.fetch_add(1, Relaxed);
-                            eprintln!("CANNOT OPEN ({:4}/{:4}) {:?}", count, total, file_path);
-                            return (file_contents, words);
-                        }
-                    };
-
-                    file_contents.clear();
-                    let size = file.read_to_string(&mut file_contents).unwrap();
-                    let file = &file_contents[..size];
-
-                    match serde_json::from_str(&file) {
-                        Ok(json) => {
-                            let _: Json = json;
-                            for user in json.users {
-                                for post in user.posts {
-                                    find_desc(post, &mut words);
-                                }
-                            }
-
-                            let count = COUNT.fetch_add(1, Relaxed);
-
-                            eprintln!(
-                                "FINISHED ({:4}/{:4}) {:.2} {:?}",
-                                count,
-                                total,
-                                start.elapsed().as_secs_f32(),
-                                file_path
-                            );
-                        }
-                        Err(_) => {
-                            let count = COUNT.fetch_add(1, Relaxed);
-                            eprintln!(
-                                "NO POSTS ({:4}/{:4}) {:.2} {:?}",
-                                count,
-                                total,
-                                start.elapsed().as_secs_f32(),
-                                file_path
-                            );
-                        }
-                    }
-
-                    (file_contents, words)
+                |(mut file_contents, mut phrase_counts), file_path| {
+                    process_file(start, &mut file_contents, &mut phrase_counts, file_path);
+                    (file_contents, phrase_counts)
                 },
             )
             .map(|(s, words)| {
-                let now = std::time::Instant::now();
+                let now = Instant::now();
                 save_pool.spawn(move |_| drop(s));
                 eprintln!(
                     "drop: {} ({})",
@@ -198,41 +247,12 @@ fn main() {
                 words
             })
             .reduce(HashMap::new, |mut a, mut b| {
-                let now = std::time::Instant::now();
+                let now = Instant::now();
                 for a in &mut [&mut a, &mut b] {
                     if a.len() > 1_000_000 {
-                        let a = std::mem::take(&mut **a);
+                        let phrase_counts = std::mem::take(&mut **a);
                         save_pool.spawn(move |_| {
-                            eprintln!(
-                                "start save ({}): {}",
-                                a.len(),
-                                start.elapsed().as_secs_f32(),
-                            );
-                            let file_id = TEMP_FILE_COUNT.fetch_add(1, Relaxed);
-                            let file_path = temp_dir.path().join(format!("temp-{}", file_id));
-                            let file = std::fs::OpenOptions::new()
-                                .write(true)
-                                .read(false)
-                                .create_new(true)
-                                .open(&file_path)
-                                .unwrap();
-
-                            let file = BufWriter::new(&file);
-                            let now = std::time::Instant::now();
-
-                            let a_len = a.len();
-
-                            bincode::config::DefaultOptions::default()
-                                .with_no_limit()
-                                .serialize_into(file, &a)
-                                .unwrap();
-
-                            eprintln!(
-                                "save ({}): {} ({})",
-                                a_len,
-                                start.elapsed().as_secs_f32(),
-                                now.elapsed().as_secs_f32() * 1000.0
-                            );
+                            serialize_to_temp(start, &temp_dir, phrase_counts);
                         });
                     }
                 }
@@ -264,24 +284,23 @@ fn main() {
     let deser = bincode::config::DefaultOptions::default().with_no_limit();
     let mut file_contents = Vec::new();
 
-    for file in walkdir::WalkDir::new(temp_dir.path()) {
-        let file = file.unwrap();
+    let temp_files = walkdir::WalkDir::new(temp_dir.path())
+        .into_iter()
+        .flatten()
+        .filter(|file| file.file_type().is_file())
+        .filter_map(|file| {
+            eprintln!("read temp: {:?}", file);
 
-        if !file.file_type().is_file() {
-            continue;
-        }
+            std::fs::OpenOptions::new()
+                .write(false)
+                .read(true)
+                .open(file.path())
+                .ok()
+        });
 
-        let file = file.path();
-
-        eprintln!("read temp: {:?}", file);
-
-        let file = std::fs::OpenOptions::new()
-            .write(false)
-            .read(true)
-            .open(file)
-            .unwrap();
+    for file in temp_files {
         let len = file.metadata().unwrap().len();
-        
+
         file_contents.clear();
         file_contents.resize(len as usize, 0);
         BufReader::new(file).read_exact(&mut file_contents).unwrap();
@@ -313,11 +332,13 @@ fn main() {
     for (i, (Reverse(key), words)) in table.into_iter().enumerate() {
         write!(file, "{}\t{}", key, words.len());
         eprintln!("prepare: {}/{} - {} ", i, table_len, words.len());
+
         if words.len() < 1_000_000 {
             for chunk in words {
                 config::print_result(&mut *file, chunk);
             }
         }
+
         writeln!(file);
         eprintln!("writen: {}/{}", i, table_len);
     }
