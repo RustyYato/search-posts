@@ -96,26 +96,6 @@ pub fn to_owned(chunks: [&str; WORD_COUNT]) -> [Box<str>; WORD_COUNT] {{
 pub fn print_result(mut file: impl std::io::Write, chunk: [Box<str>; WORD_COUNT]) {{
     write!(file, "\t{print_fmt}"{print_arg});
 }}
-#[allow(unused_must_use)]
-pub fn to_string(mut chunk: [Box<str>; WORD_COUNT]) -> String {{
-    use std::borrow::Cow;
-    use itertools::Itertools;
-    chunk.iter_mut()
-        .map(std::mem::take)
-        .map(String::from)
-        .map(Cow::Owned)
-        .intersperse(Cow::Borrowed(" "))
-        .collect()
-}}
-#[allow(unused_must_use)]
-pub fn parse(s: &str) -> [&str; WORD_COUNT] {{
-    let mut output = [""; WORD_COUNT];
-    let mut iter = s.split(" ");
-    for i in output.iter_mut() {{
-        *i = iter.next().unwrap();
-    }}
-    output
-}}
 "#,
         wc = word_count,
         to_owned = ToOwnedImpl(word_count),

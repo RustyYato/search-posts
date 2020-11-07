@@ -1,10 +1,6 @@
-use super::config::WORD_COUNT;
-use hashbrown::HashMap;
 use serde::Deserializer;
 
-use std::hash::{BuildHasher, Hash, Hasher};
-
-pub struct DesCollect<'a>(pub &'a mut HashMap<[Box<str>; WORD_COUNT], u32>);
+pub struct DesCollect<'a>(pub &'a mut super::Map);
 
 impl<'de> serde::de::DeserializeSeed<'de> for DesCollect<'_> {
     type Value = ();
@@ -28,24 +24,9 @@ impl<'de> serde::de::Visitor<'de> for DesCollect<'_> {
     where
         A: serde::de::MapAccess<'de>,
     {
-        let search = &mut *self.0;
-        while let Some((word, value)) = map.next_entry()? {
-            let _: [&str; WORD_COUNT] = word;
-            let _: u32 = value;
-
-            let mut hasher = search.hasher().build_hasher();
-            word.hash(&mut hasher);
-            let hash = hasher.finish();
-
-            *search
-                .raw_entry_mut()
-                .from_hash(hash, |item| {
-                    item.iter()
-                        .map(AsRef::<str>::as_ref)
-                        .eq(word.iter().copied())
-                })
-                .or_insert_with(|| (crate::config::to_owned(word), 0))
-                .1 += value;
+        let phrase_counts = &mut *self.0;
+        while let Some((phrase, count)) = map.next_entry()? {
+            super::insert_value(phrase, count, phrase_counts);
         }
 
         Ok(())

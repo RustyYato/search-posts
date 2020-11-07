@@ -1,21 +1,19 @@
 use bincode::config::Options;
 use hashbrown::HashMap;
-use itertools::Itertools;
+use log::{error, info, warn};
 use rayon::prelude::*;
-use serde::Deserialize;
-use unicode_segmentation::UnicodeSegmentation;
+use serde::de::DeserializeSeed;
 use walkdir::WalkDir;
 
 use std::cmp::Reverse;
 use std::collections::BTreeMap;
-use std::hash::{BuildHasher, Hash, Hasher};
 use std::io::{BufReader, BufWriter, Read, Write};
 use std::path::Path;
 use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering::Relaxed};
 use std::time::Instant;
 
 mod des_collect;
-mod value;
+mod proc_file;
 
 mod config {
     include!(concat!(env!("OUT_DIR"), "/out.rs"));
@@ -28,19 +26,9 @@ type Phrase<'a> = [&'a str; config::WORD_COUNT];
 type PhraseBuf = [Box<str>; config::WORD_COUNT];
 type Map = HashMap<PhraseBuf, u32>;
 
-#[derive(Deserialize)]
-struct Json<'a> {
-    #[serde(borrow)]
-    users: Vec<User<'a>>,
-}
-
-#[derive(Deserialize)]
-struct User<'a> {
-    #[serde(borrow)]
-    posts: Vec<value::Value<'a>>,
-}
-
 fn insert_value(phrase: Phrase, count: u32, phrase_counts: &mut Map) {
+    use std::hash::{BuildHasher, Hash, Hasher};
+
     let mut hasher = phrase_counts.hasher().build_hasher();
     phrase.hash(&mut hasher);
     let hash = hasher.finish();
@@ -56,40 +44,6 @@ fn insert_value(phrase: Phrase, count: u32, phrase_counts: &mut Map) {
         .1 += count;
 }
 
-fn find_desc(input: value::Value<'_>, phrase_counts: &mut Map) {
-    use value::Value::*;
-
-    match input {
-        Ignored | String(_) => (),
-        Array(array) => array
-            .into_iter()
-            .for_each(|value| find_desc(value, phrase_counts)),
-        Object(map) => {
-            let phrases = map
-                .iter()
-                .filter_map(|(key, value)| {
-                    if key == "text" || key == "description" {
-                        value.as_str()
-                    } else {
-                        None
-                    }
-                })
-                .flat_map(UnicodeSegmentation::unicode_sentences)
-                .map(UnicodeSegmentation::unicode_words)
-                .flat_map(Itertools::tuple_windows);
-
-            for phrase in phrases {
-                let chunk = config::get_chunks(phrase);
-
-                insert_value(chunk, 1, phrase_counts);
-            }
-
-            map.into_iter()
-                .for_each(|(_, value)| find_desc(value, phrase_counts));
-        }
-    }
-}
-
 fn process_file(
     start: Instant,
     file_contents: &mut String,
@@ -101,7 +55,7 @@ fn process_file(
         Ok(file) => file,
         Err(_) => {
             let count = FILE_PROCESED_COUNT.fetch_add(1, Relaxed);
-            eprintln!(
+            error!(
                 "CANNOT OPEN ({:4}/{:4}) {:?}",
                 count,
                 TOTAL_FILE_COUNT.load(Relaxed),
@@ -115,18 +69,14 @@ fn process_file(
     let size = file.read_to_string(file_contents).unwrap();
     let file = &file_contents[..size];
 
-    match serde_json::from_str(&file) {
-        Ok(json) => {
-            let _: Json = json;
-            for user in json.users {
-                for post in user.posts {
-                    find_desc(post, phrase_counts);
-                }
-            }
+    let result = proc_file::ProcFile::new(phrase_counts)
+        .deserialize(&mut serde_json::Deserializer::from_str(file));
 
+    match result {
+        Ok(()) => {
             let count = FILE_PROCESED_COUNT.fetch_add(1, Relaxed);
 
-            eprintln!(
+            info!(
                 "FINISHED ({:4}/{:4}) {:.2} {:?}",
                 count,
                 TOTAL_FILE_COUNT.load(Relaxed),
@@ -136,7 +86,7 @@ fn process_file(
         }
         Err(_) => {
             let count = FILE_PROCESED_COUNT.fetch_add(1, Relaxed);
-            eprintln!(
+            warn!(
                 "NO POSTS ({:4}/{:4}) {:.2} {:?}",
                 count,
                 TOTAL_FILE_COUNT.load(Relaxed),
@@ -147,14 +97,10 @@ fn process_file(
     }
 }
 
-fn serialize_to_temp(start: Instant, temp_dir: &tempfile::TempDir, phrase_counts: Map) {
+fn serialize_to_temp(temp_dir: &tempfile::TempDir, phrase_counts: Map) {
     static TEMP_FILE_COUNT: AtomicU32 = AtomicU32::new(0);
 
-    eprintln!(
-        "start save ({}): {}",
-        phrase_counts.len(),
-        start.elapsed().as_secs_f32(),
-    );
+    info!("start save: {}", phrase_counts.len());
 
     let file_id = TEMP_FILE_COUNT.fetch_add(1, Relaxed);
     let file_path = temp_dir.path().join(format!("temp-{}", file_id));
@@ -175,15 +121,22 @@ fn serialize_to_temp(start: Instant, temp_dir: &tempfile::TempDir, phrase_counts
         .serialize_into(file, &phrase_counts)
         .unwrap();
 
-    eprintln!(
-        "save ({}): {} ({})",
+    info!(
+        "finish save: {} ({} ms)",
         a_len,
-        start.elapsed().as_secs_f32(),
         now.elapsed().as_secs_f32() * 1000.0
     );
 }
 
 fn main() {
+    stderrlog::new()
+        .module(module_path!())
+        .timestamp(stderrlog::Timestamp::Second)
+        .color(stderrlog::ColorChoice::Auto)
+        .verbosity(4)
+        .init()
+        .unwrap();
+
     let start = Instant::now();
 
     let paths: Vec<String> = std::env::args().collect();
@@ -237,22 +190,17 @@ fn main() {
                 },
             )
             .map(|(s, words)| {
-                let now = Instant::now();
                 save_pool.spawn(move |_| drop(s));
-                eprintln!(
-                    "drop: {} ({})",
-                    start.elapsed().as_secs_f32(),
-                    now.elapsed().as_secs_f32() * 1000.0
-                );
                 words
             })
             .reduce(HashMap::new, |mut a, mut b| {
                 let now = Instant::now();
+
                 for a in &mut [&mut a, &mut b] {
                     if a.len() > 1_000_000 {
                         let phrase_counts = std::mem::take(&mut **a);
                         save_pool.spawn(move |_| {
-                            serialize_to_temp(start, &temp_dir, phrase_counts);
+                            serialize_to_temp(&temp_dir, phrase_counts);
                         });
                     }
                 }
@@ -267,17 +215,13 @@ fn main() {
                     *a.entry(b).or_default() += v;
                 }
 
-                eprintln!(
-                    "reduce: {} ({})",
-                    start.elapsed().as_secs_f32(),
-                    now.elapsed().as_secs_f32() * 1000.0
-                );
+                info!("reduce: {} ms", now.elapsed().as_secs_f32() * 1000.0);
 
                 a
             })
     });
 
-    eprintln!("time: {}", start.elapsed().as_secs_f32());
+    info!("data collection: {} s", start.elapsed().as_secs_f32());
 
     drop(save_pool);
 
@@ -289,13 +233,20 @@ fn main() {
         .flatten()
         .filter(|file| file.file_type().is_file())
         .filter_map(|file| {
-            eprintln!("read temp: {:?}", file);
-
-            std::fs::OpenOptions::new()
+            match std::fs::OpenOptions::new()
                 .write(false)
                 .read(true)
                 .open(file.path())
-                .ok()
+            {
+                Ok(file) => {
+                    info!("read temp: {:?}", file);
+                    Some(file)
+                }
+                Err(_) => {
+                    warn!("unable to read: {:?}", file);
+                    None
+                }
+            }
         });
 
     for file in temp_files {
@@ -330,8 +281,9 @@ fn main() {
 
     #[allow(unused_must_use)]
     for (i, (Reverse(key), words)) in table.into_iter().enumerate() {
+        let i = i + 1;
         write!(file, "{}\t{}", key, words.len());
-        eprintln!("prepare: {}/{} - {} ", i, table_len, words.len());
+        info!("prepare to emit: {}/{} - {} ", i, table_len, words.len());
 
         if words.len() < 1_000_000 {
             for chunk in words {
@@ -340,8 +292,8 @@ fn main() {
         }
 
         writeln!(file);
-        eprintln!("writen: {}/{}", i, table_len);
+        info!("writen: {}/{}", i, table_len);
     }
 
-    eprintln!("time: {}", start.elapsed().as_secs_f32());
+    info!("total time: {}", start.elapsed().as_secs_f32());
 }
