@@ -87,7 +87,7 @@ fn process_file(
         Err(_) => {
             let count = FILE_PROCESED_COUNT.fetch_add(1, Relaxed);
             warn!(
-                "NO POSTS ({:4}/{:4}) {:.2} {:?}",
+                "EMPTY FILE ({:4}/{:4}) {:.2} {:?}",
                 count,
                 TOTAL_FILE_COUNT.load(Relaxed),
                 start.elapsed().as_secs_f32(),
@@ -233,17 +233,18 @@ fn main() {
         .flatten()
         .filter(|file| file.file_type().is_file())
         .filter_map(|file| {
+            let file_path = file.path();
             match std::fs::OpenOptions::new()
                 .write(false)
                 .read(true)
-                .open(file.path())
+                .open(file_path)
             {
                 Ok(file) => {
-                    info!("read temp: {:?}", file);
+                    info!("read temp: {:?}", file_path);
                     Some(file)
                 }
                 Err(_) => {
-                    warn!("unable to read: {:?}", file);
+                    warn!("unable to read: {:?}", file_path);
                     None
                 }
             }
