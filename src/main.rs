@@ -14,6 +14,7 @@ use std::time::Instant;
 
 mod des_collect;
 mod proc_file;
+mod map;
 
 mod config {
     include!(concat!(env!("OUT_DIR"), "/out.rs"));
@@ -178,7 +179,7 @@ fn main() {
 
     TOTAL_FILE_COUNT.store(files.len(), Relaxed);
 
-    let mut words = save_pool.scope(move |save_pool| {
+    let words = save_pool.scope(move |save_pool| {
         files
             .into_par_iter()
             .fold_with(
@@ -254,6 +255,14 @@ fn main() {
                 }
             }
         });
+
+    let mut map = map::Map::new();
+
+    for (phrase, count) in words {
+        map.add_owned(phrase, count);
+    }
+
+    let mut words = map;
 
     for file in temp_files {
         let len = file.metadata().unwrap().len();

@@ -1,6 +1,6 @@
 use serde::Deserializer;
 
-pub struct DesCollect<'a>(pub &'a mut super::Map);
+pub struct DesCollect<'a>(pub &'a mut super::map::Map);
 
 impl<'de> serde::de::DeserializeSeed<'de> for DesCollect<'_> {
     type Value = ();
@@ -26,7 +26,7 @@ impl<'de> serde::de::Visitor<'de> for DesCollect<'_> {
     {
         let phrase_counts = &mut *self.0;
         while let Some((phrase, count)) = map.next_entry()? {
-            super::insert_value(phrase, count, phrase_counts);
+            phrase_counts.add(phrase, count);
         }
 
         Ok(())

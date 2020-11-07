@@ -24,6 +24,7 @@ num_cpus = '1'
 bincode = '1'
 log = '0.4'
 stderrlog = '0.5'
+ahash = '0.4'
 
 [dependencies.serde]
 version = '1'
