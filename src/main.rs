@@ -43,6 +43,10 @@ struct Config {
     worker_threads: Option<usize>,
     #[structopt(long, short)]
     background_threads: Option<usize>,
+    #[structopt(long)]
+    no_cache: bool,
+    #[structopt(long, short, default_value = "1_000_000", conflicts_with("no_cache"))]
+    cache_threshold: usize,
 }
 
 fn insert_value(phrase: Phrase, count: u32, phrase_counts: &mut Map) {
@@ -146,7 +150,7 @@ fn serialize_to_temp(temp_dir: &tempfile::TempDir, phrase_counts: Map) {
 }
 
 fn main() {
-    let config: Config = Config::from_args();
+    let mut config: Config = Config::from_args();
 
     if !config.no_log {
         stderrlog::new()
@@ -160,7 +164,8 @@ fn main() {
 
     let start = Instant::now();
 
-    let paths = config.files;
+    let paths = std::mem::take(&mut config.files);
+    let config = config;
 
     let temp_dir = tempfile::tempdir().unwrap();
     let temp_dir = &temp_dir;
@@ -200,7 +205,7 @@ fn main() {
 
     TOTAL_FILE_COUNT.store(files.len(), Relaxed);
 
-    let words = save_pool.scope(move |save_pool| {
+    let words = save_pool.scope(|save_pool| {
         files
             .into_par_iter()
             .fold_with(
@@ -217,8 +222,15 @@ fn main() {
             .reduce(HashMap::new, |mut a, mut b| {
                 let now = Instant::now();
 
-                for a in &mut [&mut a, &mut b] {
-                    if a.len() > 1_000_000 {
+                let mut maps = [&mut a, &mut b];
+                let maps = if config.no_cache {
+                    &mut [][..]
+                } else {
+                    &mut maps[..]
+                };
+
+                for a in maps.iter_mut() {
+                    if a.len() > config.cache_threshold {
                         let phrase_counts = std::mem::take(&mut **a);
                         save_pool.spawn(move |_| {
                             serialize_to_temp(&temp_dir, phrase_counts);
