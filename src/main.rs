@@ -71,7 +71,7 @@ struct Config {
     #[structopt(
         long,
         short,
-        default_value = "1_000_000",
+        default_value = "1000000",
         conflicts_with("no_cache"),
         help("set the threshold for how many values should go into each cache file")
     )]
