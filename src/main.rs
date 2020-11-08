@@ -30,22 +30,51 @@ type PhraseBuf = [Box<str>; config::WORD_COUNT];
 type Map = HashMap<PhraseBuf, u32>;
 
 #[derive(StructOpt, Debug)]
-#[structopt(name = concat!("search_posts_n"), about = "Count the number of times a phrase occurs in a set of json files")]
+#[structopt(name = concat!("search_posts"), about = "Count the number of times all n-grams occurs in a set of json files")]
 struct Config {
-    files: Vec<std::path::PathBuf>,
-    #[structopt(long)]
+    #[structopt(help("folders containing json files to be processed"))]
+    folders: Vec<std::path::PathBuf>,
+
+    #[structopt(long, help("disable all logging"))]
     no_log: bool,
-    #[structopt(long, short, conflicts_with("no_log"))]
+
+    #[structopt(
+        long,
+        short,
+        conflicts_with("no_log"),
+        help("set verbose logging, conflicts with no_log")
+    )]
     verbose: bool,
-    #[structopt(long)]
-    output: Option<std::path::PathBuf>,
-    #[structopt(long, short)]
+
+    #[structopt(
+        long,
+        short,
+        default_value = "out.txt",
+        help("output file containing all the words")
+    )]
+    output: std::path::PathBuf,
+
+    #[structopt(long, short, help("number of worker threads that process jsons"))]
     worker_threads: Option<usize>,
-    #[structopt(long, short)]
+
+    #[structopt(
+        long,
+        short,
+        conflicts_with("no_cache"),
+        help("number of background threads to cache data")
+    )]
     background_threads: Option<usize>,
-    #[structopt(long)]
+
+    #[structopt(long, help("disable cache, WARNING this may cause the this program to use more ram than is available"))]
     no_cache: bool,
-    #[structopt(long, short, default_value = "1_000_000", conflicts_with("no_cache"))]
+
+    #[structopt(
+        long,
+        short,
+        default_value = "1_000_000",
+        conflicts_with("no_cache"),
+        help("set the threshold for how many values should go into each cache file")
+    )]
     cache_threshold: usize,
 }
 
@@ -164,13 +193,19 @@ fn main() {
 
     let start = Instant::now();
 
-    let paths = std::mem::take(&mut config.files);
+    let paths = std::mem::take(&mut config.folders);
     let config = config;
 
     let temp_dir = tempfile::tempdir().unwrap();
     let temp_dir = &temp_dir;
     let save_pool = rayon::ThreadPoolBuilder::new()
-        .num_threads(config.background_threads.unwrap_or_else(num_cpus::get))
+        .num_threads(config.background_threads.unwrap_or_else(|| {
+            if config.no_cache {
+                1
+            } else {
+                num_cpus::get()
+            }
+        }))
         .build()
         .unwrap();
 
@@ -215,10 +250,7 @@ fn main() {
                     (file_contents, phrase_counts)
                 },
             )
-            .map(|(s, words)| {
-                save_pool.spawn(move |_| drop(s));
-                words
-            })
+            .map(|(_, words)| words)
             .reduce(HashMap::new, |mut a, mut b| {
                 let now = Instant::now();
 
@@ -325,7 +357,7 @@ fn main() {
         .write(true)
         .truncate(true)
         .read(false)
-        .open(config.output.as_deref().unwrap_or(Path::new("out.txt")))
+        .open(config.output)
         .unwrap();
     let mut file = BufWriter::new(file);
     let file = &mut file;
