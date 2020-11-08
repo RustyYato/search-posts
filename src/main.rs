@@ -3,6 +3,7 @@ use hashbrown::HashMap;
 use log::{error, info, warn};
 use rayon::prelude::*;
 use serde::de::DeserializeSeed;
+use structopt::StructOpt;
 use walkdir::WalkDir;
 
 use std::cmp::Reverse;
@@ -27,6 +28,22 @@ static TEMP_FILE_COUNT: AtomicU32 = AtomicU32::new(0);
 type Phrase<'a> = [&'a str; config::WORD_COUNT];
 type PhraseBuf = [Box<str>; config::WORD_COUNT];
 type Map = HashMap<PhraseBuf, u32>;
+
+#[derive(StructOpt, Debug)]
+#[structopt(name = concat!("search_posts_n"), about = "Count the number of times a phrase occurs in a set of json files")]
+struct Config {
+    files: Vec<std::path::PathBuf>,
+    #[structopt(long)]
+    no_log: bool,
+    #[structopt(long, short, conflicts_with("no_log"))]
+    verbose: bool,
+    #[structopt(long)]
+    output: Option<std::path::PathBuf>,
+    #[structopt(long, short)]
+    worker_threads: Option<usize>,
+    #[structopt(long, short)]
+    background_threads: Option<usize>,
+}
 
 fn insert_value(phrase: Phrase, count: u32, phrase_counts: &mut Map) {
     use std::hash::{BuildHasher, Hash, Hasher};
@@ -129,27 +146,31 @@ fn serialize_to_temp(temp_dir: &tempfile::TempDir, phrase_counts: Map) {
 }
 
 fn main() {
-    stderrlog::new()
-        .module(module_path!())
-        .timestamp(stderrlog::Timestamp::Second)
-        .color(stderrlog::ColorChoice::Auto)
-        .verbosity(4)
-        .init()
-        .unwrap();
+    let config: Config = Config::from_args();
+
+    if !config.no_log {
+        stderrlog::new()
+            .module(module_path!())
+            .timestamp(stderrlog::Timestamp::Second)
+            .color(stderrlog::ColorChoice::Auto)
+            .verbosity(if config.verbose { 4 } else { 1 })
+            .init()
+            .unwrap();
+    }
 
     let start = Instant::now();
 
-    let paths: Vec<String> = std::env::args().collect();
+    let paths = config.files;
 
     let temp_dir = tempfile::tempdir().unwrap();
     let temp_dir = &temp_dir;
     let save_pool = rayon::ThreadPoolBuilder::new()
-        .num_threads(num_cpus::get())
+        .num_threads(config.background_threads.unwrap_or_else(num_cpus::get))
         .build()
         .unwrap();
 
     rayon::ThreadPoolBuilder::new()
-        .num_threads(num_cpus::get())
+        .num_threads(config.worker_threads.unwrap_or_else(num_cpus::get))
         .build_global()
         .unwrap();
 
@@ -292,7 +313,7 @@ fn main() {
         .write(true)
         .truncate(true)
         .read(false)
-        .open("out.txt")
+        .open(config.output.as_deref().unwrap_or(Path::new("out.txt")))
         .unwrap();
     let mut file = BufWriter::new(file);
     let file = &mut file;

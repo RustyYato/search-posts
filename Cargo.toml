@@ -25,6 +25,7 @@ bincode = '1'
 log = '0.4'
 stderrlog = '0.5'
 ahash = '0.4'
+structopt = '0.3'
 
 [dependencies.serde]
 version = '1'
