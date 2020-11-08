@@ -1,6 +1,6 @@
 [package]
 name = "search-posts"
-version = "0.1.0"
+version = "1.0.0"
 authors = ["RustyYato <krishna.sd.2012@gmail.com>"]
 edition = "2018"
 
