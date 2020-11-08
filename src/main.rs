@@ -276,10 +276,13 @@ fn main() {
             .unwrap();
     }
 
-    let mut table = BTreeMap::<_, Vec<_>>::new();
+    let mut table = BTreeMap::new();
 
     for (word, count) in words {
-        table.entry(Reverse(count)).or_default().push(word);
+        table
+            .entry(Reverse(count))
+            .or_insert_with(Vec::new)
+            .push(word);
     }
 
     let table_len = table.len();
